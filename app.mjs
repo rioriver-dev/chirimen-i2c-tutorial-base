@@ -1,14 +1,17 @@
-import { requestI2CAccess, SHT40 } from "chirimen";
+import { requestI2CAccess, GROVELIGHT } from "chirimen";
 
-const sleep = msec => new Promise(resolve => setTimeout(resolve, msec));
+const sleep = (msec) => new Promise((resolve) => setTimeout(resolve, msec));
 
 const i2cAccess = await requestI2CAccess();
-const port = i2cAccess.ports.get(1);
-const sht40 = new SHT40(port, 0x44);
-await sht40.init();
-
+const i2cPort = i2cAccess.ports.get(1);
+const grovelight = new GROVELIGHT(i2cPort, 0x29);
+await grovelight.init();
 while (true) {
-  const { humidity, temperature } = await sht40.readData();
-  console.log("Humidity: " + humidity.toFixed(2) + "%,Temperature: " + temperature.toFixed(2) + "℃");
-  await sleep(500);
+  try {
+    const value = await grovelight.read();
+    console.log(value);
+  } catch (error) {
+    console.error(" Error : ", error);
+  }
+  await sleep(200);
 }
