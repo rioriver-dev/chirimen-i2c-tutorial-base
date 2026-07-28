@@ -1,17 +1,20 @@
-import { requestI2CAccess, GROVELIGHT } from "chirimen";
+import { requestGPIOAccess } from "chirimen";
+const sleep = msec => new Promise(resolve => setTimeout(resolve, msec)); // sleep 関数を定義
 
-const sleep = (msec) => new Promise((resolve) => setTimeout(resolve, msec));
+async function blink() {
+  const gpioAccess = await requestGPIOAccess(); // GPIO を操作する 
+  const port = gpioAccess.ports.get(26); // 26 番ポートを操作する
 
-const i2cAccess = await requestI2CAccess();
-const i2cPort = i2cAccess.ports.get(1);
-const grovelight = new GROVELIGHT(i2cPort, 0x29);
-await grovelight.init();
-while (true) {
-  try {
-    const value = await grovelight.read();
-    console.log(value);
-  } catch (error) {
-    console.error(" Error : ", error);
+  await port.export("out"); // ポートを出力モードに設定
+
+  // 無限ループ
+  for (; ;) {
+    // 1秒間隔で LED が点滅します
+    await port.write(1); // LEDを点灯
+    await sleep(1000);   // 1000 ms (1秒) 待機
+    await port.write(0); // LEDを消灯
+    await sleep(1000);   // 1000 ms (1秒) 待機
   }
-  await sleep(200);
 }
+
+blink();
