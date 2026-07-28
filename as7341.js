@@ -10,6 +10,24 @@ const AS7341_ASTEP_L = 0xCA;
 const AS7341_ASTEP_H = 0xCB;
 const AS7341_CFG1 = 0xAA;  // ゲイン設定
 const AS7341_GAIN_256X = 9;
+const AS7341_CFG6 = 0xAF;         // SMUXコマンドレジスタ
+const AS7341_STATUS2 = 0xA3;      // 測定完了フラグ(AVALID)
+const AS7341_CH0_DATA_L = 0x95;   // 測定データの先頭番地
+const SMUX_CMD_WRITE = 0x10;      // SMUX書き込みモード(bit4:3 = 10b)
+
+// SMUX結線パターン（Adafruit setup_F1F4_Clear_NIR() より）
+// ADC0=F1, ADC1=F2, ADC2=F3, ADC3=F4, ADC4=Clear, ADC5=NIR
+const SMUX_F1F4_CLEAR_NIR = [
+  0x30, 0x01, 0x00, 0x00, 0x00, 0x42, 0x00, 0x00, 0x50, 0x00,
+  0x00, 0x00, 0x20, 0x04, 0x00, 0x30, 0x01, 0x50, 0x00, 0x06
+];
+
+// SMUX結線パターン（Adafruit setup_F5F8_Clear_NIR() より）
+// ADC0=F5, ADC1=F6, ADC2=F7, ADC3=F8, ADC4=Clear, ADC5=NIR
+const SMUX_F5F8_CLEAR_NIR = [
+  0x00, 0x00, 0x00, 0x40, 0x02, 0x00, 0x10, 0x03, 0x50, 0x10,
+  0x03, 0x00, 0x00, 0x00, 0x24, 0x00, 0x00, 0x50, 0x00, 0x06
+];
 
 class AS7341 {
   constructor(i2cPort, slaveAddress) {
@@ -56,5 +74,63 @@ class AS7341 {
   async setGain(value) {
     await this.i2cSlave.write8(AS7341_CFG1, value);
   }
+  async #setSmux(config) {
+    // 測定を一旦停止（ENABLE bit1 = SP_EN を0に）
+    let enable = await this.i2cSlave.read8(AS7341_ENABLE);
+    enable &= ~0x02;
+    await this.i2cSlave.write8(AS7341_ENABLE, enable);
+
+    // 「これからSMUX設定を書くぞ」とチップに宣言
+    await this.i2cSlave.write8(AS7341_CFG6, SMUX_CMD_WRITE);
+
+    // 結線パターン20バイトを0x00〜0x13に書く
+    for (let i = 0; i < config.length; i++) {
+      await this.i2cSlave.write8(i, config[i]);
+    }
+
+    // ENABLE bit4(SMUXEN)=1 で反映開始。チップが処理を終えるとbit4が勝手に0に戻る
+    enable = await this.i2cSlave.read8(AS7341_ENABLE);
+    enable |= 0x10;
+    await this.i2cSlave.write8(AS7341_ENABLE, enable);
+    while ((await this.i2cSlave.read8(AS7341_ENABLE)) & 0x10) {
+      await this.wait(1);
+    }
+  }
+  async #measure() {
+    // 測定開始（ENABLE bit1 = SP_EN を1に）
+    let enable = await this.i2cSlave.read8(AS7341_ENABLE);
+    enable |= 0x02;
+    await this.i2cSlave.write8(AS7341_ENABLE, enable);
+
+    // STATUS2のbit6(AVALID)が立つ＝測定完了まで待つ
+    while (!((await this.i2cSlave.read8(AS7341_STATUS2)) & 0x40)) {
+      await this.wait(10);
+    }
+  }
+  async #readChannels() {
+    await this.i2cSlave.writeByte(AS7341_CH0_DATA_L);
+    const raw = await this.i2cSlave.readBytes(12);
+    const ch = [];
+    for (let i = 0; i < 6; i++) {
+      ch.push(raw[i * 2] | (raw[i * 2 + 1] << 8));
+    }
+    return ch;
+  }
+  async read() {
+    await this.#setSmux(SMUX_F1F4_CLEAR_NIR);
+    await this.#measure();
+    const low = await this.#readChannels();   // [F1, F2, F3, F4, Clear, NIR]
+
+    await this.#setSmux(SMUX_F5F8_CLEAR_NIR);
+    await this.#measure();
+    const high = await this.#readChannels();  // [F5, F6, F7, F8, Clear, NIR]
+
+    return {
+      f1: low[0], f2: low[1], f3: low[2], f4: low[3],
+      f5: high[0], f6: high[1], f7: high[2], f8: high[3],
+      clear: high[4], nir: high[5]
+    };
+  }
+
 }
 export default AS7341;

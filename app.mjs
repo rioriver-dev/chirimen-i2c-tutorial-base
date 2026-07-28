@@ -7,14 +7,9 @@ const i2cAccess = await requestI2CAccess();
 const i2cPort = i2cAccess.ports.get(1);
 const as7341 = new AS7341(i2cPort, I2CADDR_AS7341);
 
-const ret = await as7341.init();
-if (ret) {
-  console.log("init OK");
-} else {
-  console.log("init FAILED");
-}
+await as7341.init();
 
-// setInterval(async () => {
-//   let data = await as7341.read();
-//   console.log(data);
-// }, 1000);
+setInterval(async () => {
+  let data = await as7341.read();
+  console.log(data);
+}, 1000);
