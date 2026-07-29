@@ -9,7 +9,8 @@ const AS7341_ATIME = 0x81;
 const AS7341_ASTEP_L = 0xCA;
 const AS7341_ASTEP_H = 0xCB;
 const AS7341_CFG1 = 0xAA;  // ゲイン設定
-const AS7341_GAIN_256X = 9;
+// ゲイン倍率とレジスタ値(0〜10)の対応表
+const GAIN_TABLE = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512];
 const AS7341_CFG6 = 0xAF;         // SMUXコマンドレジスタ
 const AS7341_STATUS2 = 0xA3;      // 測定完了フラグ(AVALID)
 const AS7341_CH0_DATA_L = 0x95;   // 測定データの先頭番地
@@ -54,7 +55,7 @@ class AS7341 {
       // ③ 測定条件のデフォルト設定
       await this.setATIME(100);
       await this.setASTEP(999);
-      await this.setGain(AS7341_GAIN_256X);
+      await this.setGain(256);
     } catch (e) {
       console.error("AS7341.init() error : " + e);
       return null;
@@ -65,14 +66,30 @@ class AS7341 {
     return new Promise((resolve) => { setTimeout(() => { resolve(); }, ms); });
   }
   async setATIME(value) {
+    if (value < 0 || value > 255) {
+      console.error("AS7341.setATIME() value must be 0-255!");
+      return null;
+    }
     await this.i2cSlave.write8(AS7341_ATIME, value);
+    return value;
   }
   async setASTEP(value) {
+    if (value < 0 || value > 65534) {
+      console.error("AS7341.setASTEP() value must be 0-65534!");
+      return null;
+    }
     await this.i2cSlave.write8(AS7341_ASTEP_L, value & 0xFF);
     await this.i2cSlave.write8(AS7341_ASTEP_H, (value >> 8) & 0xFF);
+    return value;
   }
-  async setGain(value) {
-    await this.i2cSlave.write8(AS7341_CFG1, value);
+  async setGain(gain) {
+    const idx = GAIN_TABLE.indexOf(gain);
+    if (idx < 0) {
+      console.error("AS7341.setGain() invalid gain! (0.5, 1, 2, 4, ... 512)");
+      return null;
+    }
+    await this.i2cSlave.write8(AS7341_CFG1, idx);
+    return gain;
   }
   async #setSmux(config) {
     // 測定を一旦停止（ENABLE bit1 = SP_EN を0に）
@@ -88,13 +105,17 @@ class AS7341 {
       await this.i2cSlave.write8(i, config[i]);
     }
 
-    // ENABLE bit4(SMUXEN)=1 で反映開始。チップが処理を終えるとbit4が勝手に0に戻る
+    // ENABLE bit4(SMUXEN)=1 で反映開始。チップが処理を終えるとbit4が勝手に0に戻る（最大1秒待つ）
     enable = await this.i2cSlave.read8(AS7341_ENABLE);
     enable |= 0x10;
     await this.i2cSlave.write8(AS7341_ENABLE, enable);
-    while ((await this.i2cSlave.read8(AS7341_ENABLE)) & 0x10) {
-      await this.wait(1);
+    for (let i = 0; i < 100; i++) {
+      if (!((await this.i2cSlave.read8(AS7341_ENABLE)) & 0x10)) {
+        return;
+      }
+      await this.wait(10);
     }
+    console.error("AS7341.#setSmux() timeout!");
   }
   async #measure() {
     // 測定開始（ENABLE bit1 = SP_EN を1に）
@@ -102,10 +123,14 @@ class AS7341 {
     enable |= 0x02;
     await this.i2cSlave.write8(AS7341_ENABLE, enable);
 
-    // STATUS2のbit6(AVALID)が立つ＝測定完了まで待つ
-    while (!((await this.i2cSlave.read8(AS7341_STATUS2)) & 0x40)) {
+    // STATUS2のbit6(AVALID)が立つ＝測定完了まで待つ（最大3秒）
+    for (let i = 0; i < 300; i++) {
+      if ((await this.i2cSlave.read8(AS7341_STATUS2)) & 0x40) {
+        return;
+      }
       await this.wait(10);
     }
+    console.error("AS7341.#measure() timeout!");
   }
   async #readChannels() {
     await this.i2cSlave.writeByte(AS7341_CH0_DATA_L);
@@ -131,6 +156,5 @@ class AS7341 {
       clear: high[4], nir: high[5]
     };
   }
-
 }
 export default AS7341;
