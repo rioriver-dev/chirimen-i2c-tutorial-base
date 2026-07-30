@@ -1,5 +1,5 @@
 import { requestI2CAccess } from "chirimen";
-import AS7341 from "./as7341.js";
+import AS7341 from "./as7341-new.js";
 
 const I2CADDR_AS7341 = 0x39;
 
